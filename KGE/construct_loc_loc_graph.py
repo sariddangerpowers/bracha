@@ -122,32 +122,29 @@ def construct_transition_graph(args, filename, loc_encoder, temporal_preference,
 
 def construct_interact_graph(args, user_encoder, loc_encoder, interact_preference, norm=None, proj=None):
     user_count = args.user_count
+    loc_count = args.loc_count
     threshold = args.threshold
     L1_flag = args.L1_flag
     model_type = args.model_type
 
     bar = tqdm(total=user_count)
     bar.set_description('Construct Interact Graph')
-    transition_graph = lil_matrix((user_count, user_count), dtype=np.float32)  
+    transition_graph = lil_matrix((user_count, loc_count), dtype=np.float32)  
 
     for i in range(user_count):
-        h_e = loc_encoder(torch.LongTensor([i]).to(device))
+        h_e = user_encoder(torch.LongTensor([i]).to(device))
 
-        t_list = list(range(user_count))
-        t_e = user_encoder(torch.LongTensor(t_list).to(device))
+        t_list = list(range(loc_count))
+        t_e = loc_encoder(torch.LongTensor(t_list).to(device))
 
-        indices = torch.LongTensor(t_list[:i] + t_list[i + 1:]).to(device)
+        indices = torch.LongTensor(t_list).to(device)
         transition_vector = another_calculate_score(h_e, t_e, interact_preference, model_type, L1_flag, norm, proj)
-        transition_vector_a = torch.index_select(transition_vector, 0, indices)  # [0, 1, ..., i-1, i+1, i+2, ...]
+        transition_vector_a = torch.index_select(transition_vector, 0, indices)
 
         indices = torch.argsort(transition_vector_a, descending=True)[:threshold]  # top_k
         norm = torch.max(transition_vector_a[indices])
         for index in indices:
             index = index.item()
-            if index < i:
-                pass
-            else:
-                index += 1
             transition_graph[i, index] = (transition_vector[index] / norm).item()
 
         bar.update(1)
@@ -253,11 +250,14 @@ def main():
                 construct_transition_graph(args, graph_file, loc_encoder, temporal_preference)
         else:
             # construct_transition_graph(args, graph_file, user_encoder, friend_preference)
-            friend_graph = construct_transition_graph(args, graph_file, user_encoder, friend_preference)
+            friend_graph = construct_transition_graph(args, graph_file.replace('_user_', '_friend_'), user_encoder, friend_preference)
             interact_graph = construct_interact_graph(args, user_encoder, loc_encoder, interact_preference)
-            friend_graph = friend_graph + interact_graph
-            with open(graph_file, 'wb') as f:
+            
+            with open(graph_file.replace('_user_', '_friend_'), 'wb') as f:
                 pickle.dump(friend_graph, f, protocol=2)
+            
+            with open(graph_file, 'wb') as f:
+                pickle.dump(interact_graph, f, protocol=2)
 
 
 if __name__ == '__main__':

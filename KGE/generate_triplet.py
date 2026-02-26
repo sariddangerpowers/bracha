@@ -102,67 +102,59 @@ def generate_train_test_triplets(train_file, train_triplets_file, friendship_fil
     # 构建spatial关系  两个poi的距离小于距离阈值lambda_d，就相连
     print('Construct spatial relation......')
     pois_list = []
+    coords_rad = []
     for poi, coord in poi2gps.items():  # 生成元组列表, 即[(poi_1, coord_1), ...]
-        pois_list.append((poi, coord))
+        pois_list.append(poi)
+        coords_rad.append([radians(coord[0]), radians(coord[1])])
+        
+    import numpy as np
+    from sklearn.neighbors import BallTree
+    coords_rad = np.array(coords_rad)
+    tree = BallTree(coords_rad, metric='haversine')
+    EARTH_RADIUS_KM = 6371
 
     # 方案1
     if SCHEME == 1:
         lambda_d = 0.2  # 距离阈值为0.2千米
+        rad_dist = lambda_d / EARTH_RADIUS_KM
+        
+        # Query radius for all points simultaneously
+        ind = tree.query_radius(coords_rad, r=rad_dist)
+        
         with tqdm(total=len(pois_list)) as bar:
-            for i in range(len(pois_list)):
-                for j in range(i+1, len(pois_list)):
-                    poi_prev, coord_prev = pois_list[i]
-                    poi_next, coord_next = pois_list[j]
-        
-                    poi_prev = poi_prev + users_count  # poi在entity中所对应的实体集
-                    poi_next = poi_next + users_count
-                    lat_prev, lon_prev = coord_prev
-                    lat_next, lon_next = coord_next
-        
-                    dist = haversine(lat_prev, lon_prev, lat_next, lon_next)
-                    if dist <= lambda_d:
-                        f_train_triplets.write(str(poi_prev) + '\t')
-                        f_train_triplets.write(str(poi_next) + '\t')
-                        f_train_triplets.write('2' + '\n')  # 2代表spatial relation
-                        # spatial relation是对称的
-                        f_train_triplets.write(str(poi_next) + '\t')
-                        f_train_triplets.write(str(poi_prev) + '\t')
-                        f_train_triplets.write('2' + '\n')
-        
+            for i, neighbors in enumerate(ind):
+                poi_prev = pois_list[i] + users_count
+                for j in neighbors:
+                    if j > i: # Avoid self-loops and duplicate pairs
+                        poi_next = pois_list[j] + users_count
+                        f_train_triplets.write(str(poi_prev) + '\t' + str(poi_next) + '\t2\n')
+                        f_train_triplets.write(str(poi_next) + '\t' + str(poi_prev) + '\t2\n')
                 bar.update(1)
 
     # 方案2
     else:
-        lambda_d = 3  # 距离阈值为3千米, 再取top k, 即双重限制
+        lambda_d = 3  # 距离阈值为3千米, 再取top k(50)
+        rad_dist = lambda_d / EARTH_RADIUS_KM
+        
+        # Query radius, but we need distances to sort and pick top 50, so this returns both
+        ind, dists = tree.query_radius(coords_rad, r=rad_dist, return_distance=True)
+        
         with tqdm(total=len(pois_list)) as bar:
-            for i in range(len(pois_list)):
-                loci_list = []
-                for j in range(len(pois_list)):
-                    poi_prev, coord_prev = pois_list[i]
-                    poi_next, coord_next = pois_list[j]
-
-                    poi_prev = poi_prev + users_count  # poi在entity中所对应的实体集
-                    poi_next = poi_next + users_count
-                    lat_prev, lon_prev = coord_prev
-                    lat_next, lon_next = coord_next
-
-                    dist = haversine(lat_prev, lon_prev, lat_next, lon_next)
-                    if dist <= lambda_d and poi_prev != poi_next:
-                        loci_list.append((poi_next, dist))  # 先是第一重限制, 这样可能会造成很多重复计算
-
-                sort_list = sorted(loci_list, key=lambda x: x[1])  # 从小到大排序,距离越小,排名越靠前
-                length = min(len(sort_list), 50)
-                select_pois = sort_list[:length]  # 一般情况下, sort_list的长度肯定不止50, 取top 50  这是第二重限制
-                for poi_entity, _ in select_pois:
-                    f_train_triplets.write(str(poi_prev) + '\t')
-                    f_train_triplets.write(str(poi_entity) + '\t')
-                    f_train_triplets.write('2' + '\n')  # 2代表spatial relation
-                    # spatial relation是对称的
-                    f_train_triplets.write(str(poi_entity) + '\t')
-                    f_train_triplets.write(str(poi_prev) + '\t')
-                    f_train_triplets.write('2' + '\n')
-
-                bar.update(1)
+             for i, neighbors in enumerate(ind):
+                 poi_prev = pois_list[i] + users_count
+                 
+                 # Combine neighbors with their distance, filtering out self
+                 neighbor_dists = [(neighbors[k], dists[i][k]) for k in range(len(neighbors)) if neighbors[k] != i]
+                 
+                 # Sort by distance and take top 50
+                 sort_list = sorted(neighbor_dists, key=lambda x: x[1])[:50]
+                 
+                 for j, _ in sort_list:
+                     poi_next = pois_list[j] + users_count
+                     f_train_triplets.write(str(poi_prev) + '\t' + str(poi_next) + '\t2\n')
+                     f_train_triplets.write(str(poi_next) + '\t' + str(poi_prev) + '\t2\n')
+                     
+                 bar.update(1)
 
     # 构建friend关系  互为朋友的user相连  这个train/test会重复构造一次,可以选择生成一个friend_triplet文件,然后再将其内容放入train/test
     # 但因为数量很少,构造很快,所以放在一起

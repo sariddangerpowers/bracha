@@ -21,7 +21,7 @@ if __name__ == '__main__':
             f_new_test.write(t + '\t')
             f_new_test.write(r + '\n')
 
-    with open('./dataset/{}/scheme_{}/final_train_triplets.txt', 'r').format(DATA_NAME, SCHEME) as f_train:
+    with open('./dataset/{}/{}_scheme{}/final_train_triplets.txt'.format(DATA_NAME, DATA_NAME, SCHEME), 'r') as f_train:
         for line in f_train.readlines():
             tokens = tuple(line.strip('\n').split('\t'))
             h, t, r = tokens  # str

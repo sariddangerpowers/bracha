@@ -11,10 +11,13 @@ class Setting:
 
     def parse(self):
         self.guess_foursquare = any(['4sq' in argv for argv in sys.argv])  # foursquare has different default args.
+        self.guess_brightkite = any(['brightkite' in argv for argv in sys.argv])  # brightkite has different default args.
 
         parser = argparse.ArgumentParser()
         if self.guess_foursquare:
             self.parse_foursquare(parser)
+        elif self.guess_brightkite:
+            self.parse_brightkite(parser)
         else:
             self.parse_gowalla(parser)
         self.parse_arguments(parser)
@@ -36,9 +39,9 @@ class Setting:
         self.dataset_file = './data/{}'.format(args.dataset)
         self.friend_file = './data/{}'.format(args.friendship)
         self.max_users = 0  # 0 = use all available users
-        self.sequence_length = 20  # 将用户的所有check-in轨迹划分成固定长度为20的多个子轨迹
+        self.sequence_length = args.sequence_length
         self.batch_size = args.batch_size
-        self.min_checkins = 101
+        self.min_checkins = args.min_checkins
 
         # evaluation        
         self.validate_epoch = args.validate_epoch  # 每5轮验证一次
@@ -83,7 +86,7 @@ class Setting:
                             help='report every x user on evaluation (-1: ignore)')
 
         # log
-        parser.add_argument('--log_file', default='./results/log_gowalla', type=str,
+        parser.add_argument('--log_file', default='./results/log_output', type=str,
                             help='存储结果日志')
         parser.add_argument('--trans_loc_file', default='./KGE/POI_graph/gowalla_scheme2_transe_loc_temporal_100.pkl', type=str,
                             help='使用transe方法构造的时间POI转换图')
@@ -105,6 +108,8 @@ class Setting:
         parser.add_argument('--lambda_s', default=1000, type=float, help='decay factor for spatial data')
         parser.add_argument('--lambda_loc', default=1.0, type=float, help='weight factor for transition graph')
         parser.add_argument('--lambda_user', default=1.0, type=float, help='weight factor for user graph')
+        parser.add_argument('--sequence-length', default=20, type=int, help='sequence length for splitting check-ins')
+        parser.add_argument('--min-checkins', default=101, type=int, help='minimum checkins per user (5*seq_len+1)')
 
     def parse_foursquare(self, parser):
         # defaults for foursquare dataset
@@ -114,8 +119,25 @@ class Setting:
         parser.add_argument('--lambda_s', default=100, type=float, help='decay factor for spatial data')
         parser.add_argument('--lambda_loc', default=1.0, type=float, help='weight factor for transition graph')
         parser.add_argument('--lambda_user', default=1.0, type=float, help='weight factor for user graph')
+        parser.add_argument('--sequence-length', default=20, type=int, help='sequence length for splitting check-ins')
+        parser.add_argument('--min-checkins', default=101, type=int, help='minimum checkins per user (5*seq_len+1)')
+
+    def parse_brightkite(self, parser):
+        # defaults for brightkite dataset
+        parser.add_argument('--batch-size', default=200, type=int,
+                            help='amount of users to process in one pass (batching)')
+        parser.add_argument('--lambda_t', default=0.1, type=float, help='decay factor for temporal data')
+        parser.add_argument('--lambda_s', default=1000, type=float, help='decay factor for spatial data')
+        parser.add_argument('--lambda_loc', default=1.0, type=float, help='weight factor for transition graph')
+        parser.add_argument('--lambda_user', default=1.0, type=float, help='weight factor for user graph')
+        parser.add_argument('--sequence-length', default=1, type=int, help='sequence length for splitting check-ins')
+        parser.add_argument('--min-checkins', default=5, type=int, help='minimum checkins per user')
 
     def __str__(self):
-        return (
-                   'parse with foursquare default settings' if self.guess_foursquare else 'parse with gowalla default settings') + '\n' \
-               + 'use device: {}'.format(self.device)
+        if self.guess_foursquare:
+            ds = 'foursquare'
+        elif self.guess_brightkite:
+            ds = 'brightkite'
+        else:
+            ds = 'gowalla'
+        return f'parse with {ds} default settings\nuse device: {self.device}'

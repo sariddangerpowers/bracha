@@ -114,7 +114,7 @@ class Flashback(nn.Module):
                 user_encoder_weight = self.user_gconv_weight(
                     user_encoder_weight)
             p_u = torch.index_select(
-                user_encoder_weight, 0, active_user.squeeze())
+                user_encoder_weight, 0, active_user.squeeze(0))
         else:
             p_u = self.user_encoder(active_user)  # (1, user_len, hidden_size)
             # (user_len, hidden_size)
@@ -156,7 +156,7 @@ class Flashback(nn.Module):
             interact_graph, encoder_weight).to(x.device)
 
         user_preference = torch.index_select(
-            encoder_weight_user, 0, active_user.squeeze()).unsqueeze(0)
+            encoder_weight_user, 0, active_user.squeeze(0)).unsqueeze(0)
         # print(user_preference.size())
         user_loc_similarity = torch.exp(
             -(torch.norm(user_preference - x_emb, p=2, dim=-1))).to(x.device)

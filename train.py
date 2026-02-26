@@ -130,15 +130,28 @@ for e in range(setting.epochs):  # 100
                 else:
                     h[0, j] = h0_strategy.on_reset(active_users[0][j])
 
-        x = x.squeeze().to(setting.device)
-        t = t.squeeze().to(setting.device)
-        t_slot = t_slot.squeeze().to(setting.device)
-        s = s.squeeze().to(setting.device)
+        # squeeze dim=0 removes the DataLoader batch dim only
+        x = x.squeeze(0).to(setting.device)
+        t = t.squeeze(0).to(setting.device)
+        t_slot = t_slot.squeeze(0).to(setting.device)
+        s = s.squeeze(0).to(setting.device)
 
-        y = y.squeeze().to(setting.device)
-        y_t = y_t.squeeze().to(setting.device)
-        y_t_slot = y_t_slot.squeeze().to(setting.device)
-        y_s = y_s.squeeze().to(setting.device)
+        y = y.squeeze(0).to(setting.device)
+        y_t = y_t.squeeze(0).to(setting.device)
+        y_t_slot = y_t_slot.squeeze(0).to(setting.device)
+        y_s = y_s.squeeze(0).to(setting.device)
+
+        # When sequence_length=1, squeeze collapses the seq dim too. Restore it.
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+            t = t.unsqueeze(0)
+            t_slot = t_slot.unsqueeze(0)
+            y = y.unsqueeze(0)
+            y_t = y_t.unsqueeze(0)
+            y_t_slot = y_t_slot.unsqueeze(0)
+        if s.dim() == 2:  # s has an extra coord dim: (seq, batch, 2) -> (batch, 2) when seq=1
+            s = s.unsqueeze(0)
+            y_s = y_s.unsqueeze(0)
         active_users = active_users.to(setting.device)
 
         optimizer.zero_grad()

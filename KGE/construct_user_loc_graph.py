@@ -213,14 +213,13 @@ def main():
         #     friend_graph = construct_friend_graph(args, user_encoder, loc_encoder, friend_preference, proj=proj_friend, friend_flag=True)
         #     interact_graph = construct_friend_graph(args, user_encoder, loc_encoder, interact_preference, proj=proj_interact, friend_flag=False)
     else:
+        friend_preference = rel_encoder(torch.LongTensor([3]).to(device))
         construct_transition_graph(args, graph_file, user_encoder, loc_encoder, interact_preference)
-        # if args.loc_graph:
-        #     if args.loc_spatial:
-        #         construct_transition_graph(args, graph_file, loc_encoder, spatial_preference)
-        #     else:
-        #         construct_transition_graph(args, graph_file, loc_encoder, temporal_preference)
-        # else:
-        #     construct_friend_graph(args, graph_file, user_encoder, friend_preference, interact_preference)
+        # We need to explicitly generate the friend graph and merge it with the interactive one
+        friend_graph = construct_friend_graph(args, user_encoder, loc_encoder, friend_preference)
+        interact_graph = construct_friend_graph(args, user_encoder, loc_encoder, interact_preference, friend_flag=False)
+        friend_graph_file = './' + prefix + '/' + args.dataset + '_' + args.version + '_' + args.model_type + '_friend_' + str(args.threshold) + '.pkl'
+        merge_graph(friend_graph_file, friend_graph, interact_graph)
 
 
 if __name__ == '__main__':
