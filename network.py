@@ -139,13 +139,7 @@ class Flashback(nn.Module):
                                               loc_emb).to(x.device)
             encoder_weight /= 2  # 求均值
        
-        new_x_emb = []
-        for i in range(seq_len):
-            # (user_len, hidden_size)
-            temp_x = torch.index_select(encoder_weight, 0, x[i])
-            new_x_emb.append(temp_x)
-
-        x_emb = torch.stack(new_x_emb, dim=0)  
+        x_emb = encoder_weight[x]  # (seq_len, user_len, hidden_size) — advanced indexing  
 
         # user-poi
         loc_emb = self.encoder(torch.LongTensor(
@@ -163,29 +157,26 @@ class Flashback(nn.Module):
         user_loc_similarity = user_loc_similarity.permute(1, 0)
 
         out, h = self.rnn(x_emb, h)  # (seq_len, user_len, hidden_size)
-        out_w = torch.zeros(seq_len, user_len,
-                            self.hidden_size, device=x.device)
-        
-        for i in range(seq_len):
-            sum_w = torch.zeros(user_len, 1, device=x.device)  # (200, 1)
-            for j in range(i + 1):
-                dist_t = t[i] - t[j]
-                dist_s = torch.norm(s[i] - s[j], dim=-1)
-                a_j = self.f_t(dist_t, user_len)  # (user_len, )
-                b_j = self.f_s(dist_s, user_len)
-                a_j = a_j.unsqueeze(1)  # (user_len, 1)
-                b_j = b_j.unsqueeze(1)
-                w_j = a_j * b_j + 1e-10  # small epsilon to avoid 0 division
-                w_j = w_j * user_loc_similarity[:, j].unsqueeze(1)  # (user_len, 1)
-                sum_w += w_j
-                out_w[i] += w_j * out[j]  # (user_len, hidden_size)
-            out_w[i] /= sum_w
+
+        # Vectorized Flashback: pairwise temporal-spatial weights
+        # t: (seq_len, user_len), s: (seq_len, user_len, 2)
+        dist_t = t.unsqueeze(0) - t.unsqueeze(1)  # (seq_len, seq_len, user_len) — dist_t[i,j] = t[i]-t[j]
+        dist_s = torch.norm(s.unsqueeze(0) - s.unsqueeze(1), dim=-1)  # (seq_len, seq_len, user_len)
+        a = self.f_t(dist_t, user_len)  # (seq_len, seq_len, user_len)
+        b = self.f_s(dist_s, user_len)  # (seq_len, seq_len, user_len)
+        w = a * b + 1e-10  # (seq_len, seq_len, user_len)
+        w = w * user_loc_similarity.t().unsqueeze(0)  # broadcast user_loc_similarity (user_len, seq_len) -> (1, seq_len, user_len)
+        # Causal mask: w[i,j] = 0 for j > i
+        causal = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).unsqueeze(-1)  # (seq_len, seq_len, 1)
+        w = w * causal  # zero out future positions
+        # w: (seq_len_i, seq_len_j, user_len), out: (seq_len, user_len, hidden_size)
+        # Weighted sum: out_w[i] = sum_j w[i,j,:] * out[j] / sum_j w[i,j,:]
+        sum_w = w.sum(dim=1)  # (seq_len, user_len)
+        # einsum: for each i, weighted sum over j
+        out_w = torch.einsum('iju,juh->iuh', w, out)  # (seq_len, user_len, hidden_size)
+        out_w = out_w / sum_w.unsqueeze(-1)  # normalize
             
-        out_pu = torch.zeros(seq_len, user_len, 2 *
-                             self.hidden_size, device=x.device)
-        for i in range(seq_len):
-            # (user_len, hidden_size * 2)
-            out_pu[i] = torch.cat([out_w[i], p_u], dim=1)
+        out_pu = torch.cat([out_w, p_u.unsqueeze(0).expand(seq_len, -1, -1)], dim=-1)  # (seq_len, user_len, 2*hidden_size)
 
         y_linear = self.fc(out_pu)  # (seq_len, user_len, loc_count)
 

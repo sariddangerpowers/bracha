@@ -1,35 +1,27 @@
 import torch
 import numpy as np
+from tqdm import tqdm
 from utils import log_string
 
 
-class Evaluation:
+class EvaluationTransformer:
     """
-    Handles evaluation on a given POI dataset and loader.
+    Handles evaluation on a given POI dataset for the Transformer model.
 
-    The two metrics are MAP and recall@n. Our model predicts sequence of
-    next locations determined by the sequence_length at one pass. During evaluation we
-    treat each entry of the sequence as single prediction. One such prediction
-    is the ranked list of all available locations and we can compute the two metrics.
-
-    As a single prediction is of the size of all available locations,
-    evaluation takes its time to compute. The code here is optimized.
-
-    Using the --report_user argument one can access the statistics per user.
+    Same metrics as the original (MAP, recall@n) but without hidden state
+    management — each batch is self-contained.
     """
 
-    def __init__(self, dataset, dataloader, user_count, h0_strategy, trainer, setting, log):
+    def __init__(self, dataset, dataloader, user_count, trainer, setting, log):
         self.dataset = dataset
         self.dataloader = dataloader
         self.user_count = user_count
-        self.h0_strategy = h0_strategy
         self.trainer = trainer
         self.setting = setting
         self._log = log
 
     def evaluate(self):
         self.dataset.reset()
-        h = self.h0_strategy.on_init(self.setting.batch_size, self.setting.device)
 
         with torch.no_grad():
             iter_cnt = 0
@@ -45,19 +37,16 @@ class Evaluation:
             u_average_precision = np.zeros(self.user_count)
             reset_count = torch.zeros(self.user_count)
 
-            for i, (x, t, t_slot, s, y, y_t, y_t_slot, y_s, reset_h, active_users) in enumerate(self.dataloader):
+            eval_bar = tqdm(enumerate(self.dataloader), total=len(self.dataloader),
+                            desc='  Evaluating', leave=False)
+            for i, (x, t, t_slot, s, y, y_t, y_t_slot, y_s, reset_h, active_users) in eval_bar:
                 active_users = active_users.squeeze(0)
+
+                # Track reset_count to skip already-evaluated users (same logic as original)
                 for j, reset in enumerate(reset_h):
                     if reset:
-                        if self.setting.is_lstm:
-                            hc = self.h0_strategy.on_reset_test(active_users[j], self.setting.device)
-                            h[0][0, j] = hc[0]
-                            h[1][0, j] = hc[1]
-                        else:
-                            h[0, j] = self.h0_strategy.on_reset_test(active_users[j], self.setting.device)
                         reset_count[active_users[j]] += 1
 
-                # squeeze for reasons of "loader-batch-size-is-1"
                 # squeeze dim=0 removes the DataLoader batch dim only
                 x = x.squeeze(0).to(self.setting.device)
                 t = t.squeeze(0).to(self.setting.device)
@@ -82,8 +71,8 @@ class Evaluation:
                     y_s = y_s.unsqueeze(0)
                 active_users = active_users.to(self.setting.device)
 
-                # evaluate:
-                out, h = self.trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_users)
+                # evaluate (no hidden state):
+                out = self.trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, active_users)
                 # out: (batch, seq, loc_count) on GPU
                 # y: (seq, batch) on CPU
 
@@ -132,12 +121,6 @@ class Evaluation:
                     print('Report user', j, 'preds:', u_iter_cnt[j], 'recall@1',
                           formatter.format(u_recall1[j] / u_iter_cnt[j]), 'MAP',
                           formatter.format(u_average_precision[j] / u_iter_cnt[j]), sep='\t')
-
-            # print('recall@1:', formatter.format(recall1 / iter_cnt))
-            # print('recall@5:', formatter.format(recall5 / iter_cnt))
-            # print('recall@10:', formatter.format(recall10 / iter_cnt))
-            # print('MAP', formatter.format(average_precision / iter_cnt))
-            # print('predictions:', iter_cnt)
 
             log_string(self._log, 'recall@1: ' + formatter.format(recall1 / iter_cnt))
             log_string(self._log, 'recall@5: ' + formatter.format(recall5 / iter_cnt))
